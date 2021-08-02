@@ -1,0 +1,125 @@
+<#
+Bot Name    : Split file based on file size
+Description : This script splits the file into small files of given size.
+Input       : FilePath,username,password,SplitSize,SplitCriteria,OutputFilePath,OutputFileName
+Output      : Success/Failure
+Version     : 1.0.0.20210722
+PowerShell version: 1.0
+#>
+
+param
+(
+[parameter(Mandatory=$true)] [string]$FilePath,
+[parameter(Mandatory=$true)] [string]$username,
+[parameter(Mandatory=$true)] [string]$password,
+[parameter(Mandatory=$true)] [string]$SplitSize,
+[parameter(Mandatory=$true)] [string]$SplitCriteria,
+[parameter(Mandatory=$false)] [string]$OutputFilePath,
+[parameter(Mandatory=$false)] [string]$OutputFileName
+)
+
+
+function Get_SizeinBytes($size)
+{
+    if($size -imatch 'kb')
+    {
+        return [int32]$($size -replace "\D","")*1024
+    }
+    elseif($size -imatch 'mb')
+    {
+        return [int]$($size -replace "\D","")*1024*1024
+    }
+    elseif($size -imatch 'gb')
+    {
+        return [int]$($size -replace "\D","")*1024*1024*1024
+    }
+    elseif($size -imatch 'tb')
+    {
+        return [int]$($size -replace "\D","")*1024*1024*1024*1024
+    }
+    return [int]$($size -replace "\D","")
+}
+
+function Split-File([string] $Path, [int32] $PartSizeBytes, [string] $OutputFilePath, [string] $OutputFileName)
+{
+    try
+    {
+        $baseName = [IO.Path]::GetFileNameWithoutExtension($OutputFileName)
+        $extension = [IO.Path]::GetExtension($OutputFileName)
+
+        $originalFile = New-Object System.IO.FileInfo($Path)
+        $totalChunks = [int]($originalFile.Length / $PartSizeBytes) + 1
+        $digitCount = [int][Math]::Log10($totalChunks) 
+
+        $reader = [IO.File]::OpenRead($Path)
+        $count = 1
+        $buffer = New-Object Byte[] $PartSizeBytes
+        $moreData = $true
+
+        while($moreData)
+        {
+            $bytesRead = $reader.Read($buffer, 0, $buffer.Length)
+            $chunkFileName = "$OutputFilePath\$($baseName)_{0:D$digitCount}$extension" -f $count
+            $output = $buffer
+
+            if ($bytesRead -ne $buffer.Length)
+            {
+                $moreData = $false
+                $output = New-Object Byte[] $bytesRead
+                [Array]::Copy($buffer, $output, $bytesRead)
+            }
+            [IO.File]::WriteAllBytes($chunkFileName, $output)
+            ++$count
+        }
+        $reader.Close()
+        return "Given file is splitted into $($count-1) files and it is placed in sharepath - $OutputFilePath"
+    }
+    catch
+    {
+        throw "Unable to split file ${Path}: $_"
+    }
+}
+
+try
+{
+    $Connection = net use (Split-Path -Path $FilePath) $password /USER:$username
+    if(-not $Connection) <#checking connection true/false#>
+    {
+        throw "Please enter valid sharepath/credentials"
+    }
+    $FileSize = (Get-Item $FilePath).Length
+    $split_size = Get_SizeinBytes -size $SplitSize
+    $split_criteria = Get_SizeinBytes -size $SplitCriteria
+
+    if($FileSize -lt $split_criteria)
+    {
+        throw "Couldn't Split file. File size is less than Split criteria"
+    }
+
+    if(-not $OutputFilePath)
+    {
+        $OutputFilePath = Split-Path -Path $FilePath
+    }
+    if(-not $OutputFileName)
+    {
+        $OutputFileName = Split-Path -Leaf $FilePath
+    }
+    $response = Split-File -Path $FilePath -PartSizeBytes $split_size -OutputFilePath $OutputFilePath -OutputFileName $OutputFileName
+    
+    return $response       
+}
+catch
+{
+    return "Error : " + $_.Exception.Message
+}
+finally
+{
+Remove-Variable FilePath
+Remove-Variable username
+Remove-Variable password
+Remove-Variable SplitSize
+Remove-Variable SplitCriteria
+Remove-Variable OutputFilePath
+Remove-Variable OutputFileName
+}
+
